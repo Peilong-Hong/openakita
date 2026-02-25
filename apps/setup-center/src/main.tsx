@@ -112,6 +112,9 @@ setTimeout(() => hideBoot(true), 20000);
     e.preventDefault();
     removeMenu();
 
+    // 如果事件已被组件级自定义右键菜单处理，跳过全局菜单
+    if ((e as any)._handled) return;
+
     const sel = window.getSelection();
     const hasSelection = !!(sel && sel.toString().trim());
     // Detect if right-click target is an editable element

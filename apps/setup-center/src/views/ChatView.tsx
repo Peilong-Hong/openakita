@@ -1472,6 +1472,7 @@ export function ChatView({
   const streamingConvIdRef = useRef<string | null>(null);
   const liveMessagesCache = useRef<Map<string, ChatMessage[]>>(new Map());
   const messagesSnapshotRef = useRef<ChatMessage[]>(messages);
+  const isCurrentConvStreaming = isStreaming && streamingConvIdRef.current === activeConvId;
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [convSearchQuery, setConvSearchQuery] = useState("");
   const [orbitTip, setOrbitTip] = useState<{ x: number; y: number; name: string; title: string } | null>(null);
@@ -1598,8 +1599,14 @@ export function ChatView({
     return () => { if (saveMessagesTimerRef.current) clearTimeout(saveMessagesTimerRef.current); };
   }, [messages, activeConvId, isStreaming]);
 
-  // Keep a ref that always points to latest messages (for snapshot without adding messages to deps)
-  useEffect(() => { messagesSnapshotRef.current = messages; }, [messages]);
+  // Keep a ref that always points to latest messages; also sync to live cache if streaming
+  useEffect(() => {
+    messagesSnapshotRef.current = messages;
+    const sId = streamingConvIdRef.current;
+    if (sId && activeConvId === sId) {
+      liveMessagesCache.current.set(sId, messages);
+    }
+  }, [messages, activeConvId]);
 
   // ── 切换对话时加载对应消息 ──
   const prevConvIdRef = useRef<string | null>(activeConvId);
@@ -1981,6 +1988,15 @@ export function ChatView({
         localStorage.setItem(STORAGE_KEY_MSGS_PREFIX + activeConvId, JSON.stringify(toSave));
       } catch {}
     }
+    // Abort any active streaming so the new conversation starts clean
+    if (isStreaming) {
+      try { abortRef.current?.abort(); } catch {}
+      try { readerRef.current?.cancel().catch(() => {}); } catch {}
+      readerRef.current = null;
+      abortRef.current = null;
+      setIsStreaming(false);
+      streamingConvIdRef.current = null;
+    }
     setActiveConvId(id);
     setMessages([]);
     setPendingAttachments([]);
@@ -1992,13 +2008,23 @@ export function ChatView({
       messageCount: 0,
       agentProfileId: multiAgentEnabled ? selectedAgent : undefined,
     }, ...prev]);
-  }, [activeConvId, messages, multiAgentEnabled, selectedAgent]);
+  }, [activeConvId, messages, multiAgentEnabled, selectedAgent, isStreaming]);
 
   // ── 删除对话 ──
   const deleteConversation = useCallback((convId: string, e?: React.MouseEvent) => {
     if (e) { e.stopPropagation(); e.preventDefault(); }
     // 从 localStorage 删除该对话的消息
     try { localStorage.removeItem(STORAGE_KEY_MSGS_PREFIX + convId); } catch {}
+    // If deleting the conversation that's streaming, abort and reset streaming state
+    if (streamingConvIdRef.current === convId) {
+      try { abortRef.current?.abort(); } catch {}
+      try { readerRef.current?.cancel().catch(() => {}); } catch {}
+      readerRef.current = null;
+      abortRef.current = null;
+      setIsStreaming(false);
+      streamingConvIdRef.current = null;
+      liveMessagesCache.current.delete(convId);
+    }
     // 如果删除的是当前激活的对话，切换到下一个或清空
     if (convId === activeConvId) {
       setConversations((prev) => {
@@ -2044,7 +2070,7 @@ export function ChatView({
   const sendMessage = useCallback(async (overrideText?: string) => {
     const text = (overrideText ?? inputText).trim();
     if (!text && pendingAttachments.length === 0) return;
-    if (isStreaming) return;
+    if (isCurrentConvStreaming) return;
 
     // 斜杠命令处理
     if (text.startsWith("/")) {
@@ -2077,14 +2103,14 @@ export function ChatView({
       timestamp: Date.now(),
     };
 
+    let convId = activeConvId;
+
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputText("");
     setPendingAttachments([]);
     setIsStreaming(true);
     streamingConvIdRef.current = convId ?? null;
     setSlashOpen(false);
-
-    let convId = activeConvId;
     if (!convId) {
       convId = genId();
       skipConvLoadRef.current = true;
@@ -2503,7 +2529,7 @@ export function ChatView({
                     content: `Agent 切换到：${event.agentName}${event.reason ? ` — ${event.reason}` : ""}`,
                     timestamp: Date.now(),
                   };
-                  const updated = [...prev.filter((m) => m.id !== assistantMsg.id), switchMsg, {
+                  return [...prev.filter((m) => m.id !== assistantMsg.id), switchMsg, {
                     ...assistantMsg,
                     content: currentContent,
                     thinking: currentThinking || null,
@@ -2514,10 +2540,6 @@ export function ChatView({
                     thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
                     streaming: true,
                   }];
-                  if (convId && streamingConvIdRef.current === convId) {
-                    liveMessagesCache.current.set(convId, updated);
-                  }
-                  return updated;
                 });
                 continue; // skip normal update below
               case "error":
@@ -2548,29 +2570,22 @@ export function ChatView({
             }
 
             // 更新助手消息
-            const updatedFields = {
-              content: currentContent,
-              thinking: currentThinking || null,
-              agentName: currentAgent,
-              toolCalls: currentToolCalls.length > 0 ? [...currentToolCalls] : null,
-              plan: currentPlan ? { ...currentPlan } : null,
-              askUser: currentAsk ? { ...currentAsk } : null,
-              artifacts: currentArtifacts.length > 0 ? [...currentArtifacts] : null,
-              thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
-              streaming: event.type !== "done",
-            };
             setMessages((prev) => prev.map((m) =>
-              m.id === assistantMsg.id ? { ...m, ...updatedFields } : m
+              m.id === assistantMsg.id
+                ? {
+                    ...m,
+                    content: currentContent,
+                    thinking: currentThinking || null,
+                    agentName: currentAgent,
+                    toolCalls: currentToolCalls.length > 0 ? [...currentToolCalls] : null,
+                    plan: currentPlan ? { ...currentPlan } : null,
+                    askUser: currentAsk,
+                    artifacts: currentArtifacts.length > 0 ? [...currentArtifacts] : null,
+                    thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
+                    streaming: event.type !== "done",
+                  }
+                : m
             ));
-            // Keep live cache in sync so switching back restores latest streaming state
-            if (convId && streamingConvIdRef.current === convId) {
-              const cached = liveMessagesCache.current.get(convId);
-              if (cached) {
-                liveMessagesCache.current.set(convId, cached.map((m) =>
-                  m.id === assistantMsg.id ? { ...m, ...updatedFields } : m
-                ));
-              }
-            }
 
             if (event.type === "done") break;
           } catch {
@@ -2656,7 +2671,7 @@ export function ChatView({
         });
       }
     }
-  }, [inputText, pendingAttachments, isStreaming, activeConvId, planMode, selectedEndpoint, apiBase, slashCommands, thinkingMode, thinkingDepth]);
+  }, [inputText, pendingAttachments, isCurrentConvStreaming, activeConvId, planMode, selectedEndpoint, apiBase, slashCommands, thinkingMode, thinkingDepth]);
 
   // ── 处理用户回答 (ask_user) ──
   const handleAskAnswer = useCallback((msgId: string, answer: string) => {
@@ -3052,7 +3067,7 @@ export function ChatView({
       return;
     }
 
-    if (isStreaming) {
+    if (isCurrentConvStreaming) {
       // Streaming 状态:
       //   有文本 + Ctrl+Enter = 立即插入
       //   有文本 + Enter     = 排队
@@ -3087,7 +3102,7 @@ export function ChatView({
         sendMessage();
       }
     }
-  }, [slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isStreaming, inputText, handleInsertMessage, handleQueueMessage, messageQueue]);
+  }, [slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isCurrentConvStreaming, inputText, handleInsertMessage, handleQueueMessage, messageQueue]);
 
   // ── 输入变化处理 ──
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -3158,7 +3173,7 @@ export function ChatView({
         key={conv.id}
         className={`convItem ${isActive ? "convItemActive" : ""}`}
         onClick={() => { if (renamingId !== conv.id) setActiveConvId(conv.id); }}
-        onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, convId: conv.id }); }}
+        onContextMenu={(e) => { e.preventDefault(); (e.nativeEvent as any)._handled = true; setCtxMenu({ x: e.clientX, y: e.clientY, convId: conv.id }); }}
       >
         <div className="convItemIcon">
           <span title={agentProfile?.name || ""} style={{ fontSize: 16 }}>{agentProfile?.icon || "💬"}</span>
@@ -3271,7 +3286,7 @@ export function ChatView({
       )}
 
       {/* 主聊天区 */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }} onMouseDown={() => { if (sidebarOpen) setSidebarOpen(false); }}>
         {/* Chat top bar */}
         <div className="chatTopBar">
           <button onClick={newConversation} className="chatTopBarBtn">
@@ -3547,7 +3562,7 @@ export function ChatView({
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
               onPaste={handlePaste}
-              placeholder={isStreaming ? t("chat.queueHint") : planMode ? `Plan ${t("chat.planMode")}` : t("chat.placeholder")}
+              placeholder={isCurrentConvStreaming ? t("chat.queueHint") : planMode ? `Plan ${t("chat.planMode")}` : t("chat.placeholder")}
               rows={1}
               className="chatInputTextarea"
               onInput={(e) => {
@@ -3659,7 +3674,7 @@ export function ChatView({
                     </div>
                   );
                 })()}
-                {isStreaming ? (
+                {isCurrentConvStreaming ? (
                   inputText.trim() ? (
                     <button
                       onClick={handleQueueMessage}
