@@ -62,6 +62,22 @@ export function AgentManagerView({
     setTimeout(() => setToastMsg(null), 3500);
   }, []);
 
+  const extractErrorMsg = (detail: unknown, fallback: string): string => {
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      const msgs = detail
+        .map((d: Record<string, unknown>) => typeof d?.msg === "string" ? d.msg : "")
+        .filter(Boolean);
+      return msgs.length ? msgs.join("; ") : fallback;
+    }
+    if (typeof detail === "object" && detail !== null) {
+      const d = detail as Record<string, unknown>;
+      if (typeof d.msg === "string") return d.msg;
+      try { return JSON.stringify(detail); } catch { /* fall through */ }
+    }
+    return fallback;
+  };
+
   const fetchProfiles = useCallback(async () => {
     if (!multiAgentEnabled) return;
     setLoading(true);
@@ -117,8 +133,10 @@ export function AgentManagerView({
 
   const generateId = (name: string) =>
     name
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
-      .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-")
+      .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
       .slice(0, 32) || "custom-agent";
 
@@ -154,7 +172,7 @@ export function AgentManagerView({
         showToast(t("agentManager.saveSuccess"), "ok");
       } else {
         const data = await res.json().catch(() => ({}));
-        showToast(data.detail || res.statusText || t("agentManager.saveFailed"), "err");
+        showToast(extractErrorMsg(data.detail, res.statusText || t("agentManager.saveFailed")), "err");
       }
     } catch (e) {
       showToast(String(e) || t("agentManager.saveFailed"), "err");
@@ -171,7 +189,7 @@ export function AgentManagerView({
         showToast(t("agentManager.deleteSuccess"), "ok");
       } else {
         const data = await res.json().catch(() => ({}));
-        showToast(data.detail || t("agentManager.deleteFailed"), "err");
+        showToast(extractErrorMsg(data.detail, t("agentManager.deleteFailed")), "err");
       }
     } catch (e) {
       showToast(String(e) || t("agentManager.deleteFailed"), "err");
@@ -495,16 +513,17 @@ export function AgentManagerView({
               onChange={(e) => setEditingProfile((p) => ({ ...p, skills_mode: e.target.value }))}
               style={{ ...inputStyle, cursor: "pointer" }}
             >
-              <option value="all">All Skills</option>
-              <option value="inclusive">Inclusive (only selected)</option>
-              <option value="exclusive">Exclusive (exclude selected)</option>
+              <option value="all">{t("agentManager.skillsModeAll")}</option>
+              <option value="inclusive">{t("agentManager.skillsModeInclusive")}</option>
+              <option value="exclusive">{t("agentManager.skillsModeExclusive")}</option>
             </select>
 
             {/* Skills multi-select */}
             {editingProfile.skills_mode !== "all" && availableSkills.length > 0 && (
               <div style={{
-                maxHeight: 160, overflowY: "auto", border: "1px solid var(--line)",
+                maxHeight: 200, overflowY: "auto", border: "1px solid var(--line)",
                 borderRadius: 8, padding: 8, marginBottom: 12,
+                display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 8px",
               }}>
                 {availableSkills.map((skill) => (
                   <label
@@ -512,16 +531,18 @@ export function AgentManagerView({
                     style={{
                       display: "flex", alignItems: "center", gap: 6,
                       padding: "4px 6px", borderRadius: 4, cursor: "pointer",
-                      fontSize: 12,
+                      fontSize: 12, minWidth: 0,
                     }}
                   >
                     <input
                       type="checkbox"
                       checked={editingProfile.skills.includes(skill.name)}
                       onChange={() => toggleSkill(skill.name)}
-                      style={{ accentColor: "var(--primary, #3b82f6)" }}
+                      style={{ accentColor: "var(--primary, #3b82f6)", flexShrink: 0 }}
                     />
-                    {skill.name}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {skill.name}
+                    </span>
                   </label>
                 ))}
               </div>

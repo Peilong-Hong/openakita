@@ -877,7 +877,10 @@
     "saveSuccess": "Saved successfully",
     "saveFailed": "Save failed",
     "deleteSuccess": "Deleted successfully",
-    "deleteFailed": "Delete failed"
+    "deleteFailed": "Delete failed",
+    "skillsModeAll": "All Skills",
+    "skillsModeInclusive": "Only selected skills",
+    "skillsModeExclusive": "Exclude selected skills"
   },
   "dashboard": {
     "title": "Agent Dashboard",

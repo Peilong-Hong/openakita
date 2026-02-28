@@ -877,7 +877,10 @@
     "saveSuccess": "保存成功",
     "saveFailed": "保存失败",
     "deleteSuccess": "删除成功",
-    "deleteFailed": "删除失败"
+    "deleteFailed": "删除失败",
+    "skillsModeAll": "全部技能",
+    "skillsModeInclusive": "仅使用勾选的技能",
+    "skillsModeExclusive": "排除勾选的技能"
   },
   "dashboard": {
     "title": "Agent 仪表盘",
