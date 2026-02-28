@@ -324,6 +324,13 @@ class RetrievalEngine:
         if cache_key in self._decompose_cache:
             return self._decompose_cache[cache_key]
 
+        # 防止缓存无限增长
+        if len(self._decompose_cache) > 500:
+            # 清掉一半（FIFO 近似：dict 保持插入顺序）
+            keys = list(self._decompose_cache.keys())
+            for k in keys[:250]:
+                del self._decompose_cache[k]
+
         if self.brain:
             result = self._decompose_with_llm(query, recent_messages)
             if result:

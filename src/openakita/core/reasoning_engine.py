@@ -126,10 +126,31 @@ class ReasoningEngine:
         # _finalize_session 据此决定是否自动关闭 Plan
         self._last_exit_reason: str = "normal"
 
+        # Checkpoint 数据中 messages_snapshot 可含大量工具结果，
+        # 在 session 结束时清理以释放内存
+        self._max_working_messages_kept = 0  # 清理时保留的条数（0=全部释放）
+
         # 浏览器"读页面状态"工具
         self._browser_page_read_tools = frozenset({
             "browser_get_content", "browser_screenshot",
         })
+
+    # ==================== 内存管理 ====================
+
+    def release_large_buffers(self) -> None:
+        """释放推理结束后残留的大对象，防止内存泄漏。
+
+        在 _cleanup_session_state 中调用。
+        _last_working_messages 持有完整的 LLM 上下文（含 base64 截图、
+        网页内容等工具结果），是最大的内存占用者，必须主动释放。
+        _checkpoints 含 messages_snapshot 深拷贝，同样需要释放。
+
+        注意：不清理 _last_react_trace — 它已被复制到 agent._last_finalized_trace，
+        而 _last_finalized_trace 由 orchestrator / SSE 使用，需等到下次会话自然覆盖。
+        """
+        self._last_working_messages = []
+        self._checkpoints.clear()
+        self._tool_failure_counter.clear()
 
     # ==================== ask_user 等待用户回复 ====================
 

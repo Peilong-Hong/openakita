@@ -49,6 +49,11 @@ class SmartModeThrottle:
         """检查该群是否可以处理一条 smart 消息（频率限制）"""
         now = time.monotonic()
 
+        # 定期清理不活跃的 chat 条目（每 100 次调用清理一次）
+        self._call_count = getattr(self, "_call_count", 0) + 1
+        if self._call_count % 100 == 0:
+            self._cleanup_stale_chats(now)
+
         # 冷却期检查
         last_reply = self._last_reply_time.get(chat_id, 0)
         if now - last_reply < self.cooldown_after_reply:
@@ -62,6 +67,19 @@ class SmartModeThrottle:
             return False
 
         return True
+
+    def _cleanup_stale_chats(self, now: float) -> None:
+        """清理超过 1 小时无活动的 chat 条目，防止内存泄漏。"""
+        stale_threshold = 3600  # 1 小时
+
+        stale_keys = [
+            cid for cid, ts_list in self._counter.items()
+            if not ts_list or (now - max(ts_list)) > stale_threshold
+        ]
+        for cid in stale_keys:
+            self._counter.pop(cid, None)
+            self._last_reply_time.pop(cid, None)
+            self._buffer.pop(cid, None)
 
     def record_process(self, chat_id: str) -> None:
         """记录处理了一条消息"""

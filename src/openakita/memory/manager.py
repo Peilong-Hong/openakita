@@ -647,10 +647,11 @@ class MemoryManager:
                     except Exception as e:
                         logger.warning(f"[Memory] Failed to back-fill episode links: {e}")
 
-                self._pending_tasks.discard(task)
+                pass  # cleanup via done_callback below
 
             task = loop.create_task(_finalize_session())
             self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
         except RuntimeError:
             self._enqueue_session_turns_for_extraction(session_id, turns)
 

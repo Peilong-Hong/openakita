@@ -366,31 +366,36 @@ async def _stream_chat(
             if getattr(session.context, "sub_agent_records", None):
                 session_manager.mark_dirty()
 
-        # Collect usage from the last react trace
+        # Collect usage — prefer pre-computed summary (survives cleanup),
+        # fall back to reading full trace (legacy path)
         _usage_data: dict | None = None
         try:
-            re = getattr(actual_agent, "reasoning_engine", None)
-            trace = getattr(actual_agent, "_last_finalized_trace", None) or \
-                (getattr(re, "_last_react_trace", []) if re else [])
-            if trace:
-                total_in = sum(t.get("tokens", {}).get("input", 0) for t in trace)
-                total_out = sum(t.get("tokens", {}).get("output", 0) for t in trace)
-                _usage_data = {
-                    "input_tokens": total_in,
-                    "output_tokens": total_out,
-                    "total_tokens": total_in + total_out,
-                }
-            ctx_mgr = getattr(actual_agent, "context_manager", None) or getattr(re, "_context_manager", None)
-            if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
-                _max_ctx = ctx_mgr.get_max_context_tokens()
-                _msgs = getattr(re, "_last_working_messages", None) or getattr(
-                    getattr(actual_agent, "_context", None), "messages", []
-                )
-                _cur_ctx = ctx_mgr.estimate_messages_tokens(_msgs) if _msgs else 0
-                if _usage_data is None:
-                    _usage_data = {}
-                _usage_data["context_tokens"] = _cur_ctx
-                _usage_data["context_limit"] = _max_ctx
+            _cached = getattr(actual_agent, "_last_usage_summary", None)
+            if _cached:
+                _usage_data = dict(_cached)
+            else:
+                re = getattr(actual_agent, "reasoning_engine", None)
+                trace = getattr(actual_agent, "_last_finalized_trace", None) or \
+                    (getattr(re, "_last_react_trace", []) if re else [])
+                if trace:
+                    total_in = sum(t.get("tokens", {}).get("input", 0) for t in trace)
+                    total_out = sum(t.get("tokens", {}).get("output", 0) for t in trace)
+                    _usage_data = {
+                        "input_tokens": total_in,
+                        "output_tokens": total_out,
+                        "total_tokens": total_in + total_out,
+                    }
+                ctx_mgr = getattr(actual_agent, "context_manager", None) or getattr(re, "_context_manager", None)
+                if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
+                    _max_ctx = ctx_mgr.get_max_context_tokens()
+                    _msgs = getattr(re, "_last_working_messages", None) or getattr(
+                        getattr(actual_agent, "_context", None), "messages", []
+                    )
+                    _cur_ctx = ctx_mgr.estimate_messages_tokens(_msgs) if _msgs else 0
+                    if _usage_data is None:
+                        _usage_data = {}
+                    _usage_data["context_tokens"] = _cur_ctx
+                    _usage_data["context_limit"] = _max_ctx
         except Exception:
             pass
 

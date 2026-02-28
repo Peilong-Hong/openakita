@@ -59,17 +59,19 @@ class SessionLogBuffer:
                     cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, max_entries_per_session: int = 500):
+    def __init__(self, max_entries_per_session: int = 500, max_sessions: int = 50):
         """
         初始化会话日志缓存
 
         Args:
             max_entries_per_session: 每个 session 最多保留的日志条数
+            max_sessions: 最多保留多少个 session 的缓冲区
         """
         if self._initialized:
             return
 
         self._max_entries = max_entries_per_session
+        self._max_sessions = max_sessions
         self._buffers: dict[str, deque[LogEntry]] = {}
         self._buffer_lock = threading.Lock()
         self._current_session_id: str | None = None
@@ -121,6 +123,9 @@ class SessionLogBuffer:
         with self._buffer_lock:
             # 确保 session 的 buffer 存在
             if sid not in self._buffers:
+                # 超出 session 数上限时，淘汰最旧的非当前 session
+                if len(self._buffers) >= self._max_sessions:
+                    self._evict_oldest_session(sid)
                 self._buffers[sid] = deque(maxlen=self._max_entries)
 
             self._buffers[sid].append(entry)
@@ -199,6 +204,25 @@ class SessionLogBuffer:
             )
 
         return "\n".join(lines)
+
+    def _evict_oldest_session(self, keep_sid: str) -> None:
+        """淘汰最旧的 session 缓冲区（已在 _buffer_lock 内调用）。
+
+        保留 _global 和 keep_sid，淘汰最不活跃的 session。
+        """
+        protected = {"_global", keep_sid, self._current_session_id or ""}
+        candidates = [
+            (sid, buf) for sid, buf in self._buffers.items()
+            if sid not in protected
+        ]
+        if not candidates:
+            return
+        # 按 deque 中最后一条日志的时间排序，淘汰最旧的
+        oldest_sid = min(
+            candidates,
+            key=lambda x: x[1][-1].timestamp if x[1] else "",
+        )[0]
+        del self._buffers[oldest_sid]
 
     def clear_session(self, session_id: str) -> None:
         """

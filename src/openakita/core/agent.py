@@ -3148,6 +3148,10 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         self._conversation_history.append(
             {"role": "assistant", "content": response, "timestamp": datetime.now().isoformat()}
         )
+        # 防止内存泄漏：限制 _conversation_history 大小（保留最近 200 条）
+        _max_cli_history = 200
+        if len(self._conversation_history) > _max_cli_history:
+            self._conversation_history = self._conversation_history[-_max_cli_history:]
 
         return response
 
@@ -3602,6 +3606,9 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         _trace_snapshot = list(getattr(self.reasoning_engine, "_last_react_trace", None) or [])
         self._last_finalized_trace = _trace_snapshot
 
+        # 0b. 提取轻量 token 用量摘要（供 SSE/API 在 cleanup 后仍可读取）
+        self._last_usage_summary = self._extract_usage_summary(_trace_snapshot)
+
         # 1. 思维链摘要 → session metadata
         if session:
             try:
@@ -3693,6 +3700,13 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         ) or (self.agent_state.current_task if self.agent_state else None)
         if _task and not _task.is_active:
             self.agent_state.reset_task(session_id=_sid)
+
+        # 释放推理引擎中残留的大对象（working_messages / checkpoints），
+        # working_messages 可能持有数十 MB 的工具结果（截图 base64、网页内容等）
+        # 注意：不清理 _last_finalized_trace，它由 orchestrator/SSE 读取，
+        # 会在下次 _finalize_session 时自然被覆盖
+        if hasattr(self, "reasoning_engine"):
+            self.reasoning_engine.release_large_buffers()
 
     async def chat_with_session(
         self,
@@ -3991,6 +4005,33 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         except Exception:
             conversation_id = ""
         return conversation_id or session_id
+
+    def _extract_usage_summary(self, trace: list[dict]) -> dict:
+        """从 react_trace 提取轻量 token 用量摘要。
+
+        在 _finalize_session 中调用，提前缓存结果。
+        cleanup 释放大对象后，chat.py 仍可读取此摘要而不依赖完整 trace。
+        """
+        if not trace:
+            return {}
+        total_in = sum(t.get("tokens", {}).get("input", 0) for t in trace)
+        total_out = sum(t.get("tokens", {}).get("output", 0) for t in trace)
+        summary = {
+            "input_tokens": total_in,
+            "output_tokens": total_out,
+            "total_tokens": total_in + total_out,
+        }
+        # 估算上下文 token 数
+        try:
+            re = self.reasoning_engine
+            ctx_mgr = getattr(self, "context_manager", None) or getattr(re, "_context_manager", None)
+            if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
+                msgs = getattr(re, "_last_working_messages", None) or []
+                summary["context_tokens"] = ctx_mgr.estimate_messages_tokens(msgs) if msgs else 0
+                summary["context_limit"] = ctx_mgr.get_max_context_tokens()
+        except Exception:
+            pass
+        return summary
 
     def build_tool_trace_summary(self) -> str:
         """

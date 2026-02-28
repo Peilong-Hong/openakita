@@ -179,15 +179,34 @@ class AgentOrchestrator:
     # Mailbox / health helpers
     # ------------------------------------------------------------------
 
+    _MAX_TRACKED_AGENTS = 200
+
     def get_mailbox(self, agent_id: str) -> AgentMailbox:
         if agent_id not in self._mailboxes:
+            if len(self._mailboxes) >= self._MAX_TRACKED_AGENTS:
+                self._evict_stale_agents()
             self._mailboxes[agent_id] = AgentMailbox(agent_id)
         return self._mailboxes[agent_id]
 
     def _get_health(self, agent_id: str) -> AgentHealth:
         if agent_id not in self._health:
+            if len(self._health) >= self._MAX_TRACKED_AGENTS:
+                self._evict_stale_agents()
             self._health[agent_id] = AgentHealth(agent_id=agent_id)
         return self._health[agent_id]
+
+    def _evict_stale_agents(self) -> None:
+        """淘汰最久未活跃的 agent 条目，防止字典无限增长。"""
+        if self._health:
+            sorted_ids = sorted(
+                self._health.keys(),
+                key=lambda aid: self._health[aid].last_active,
+            )
+            # 淘汰最旧的 25%
+            evict_count = max(1, len(sorted_ids) // 4)
+            for aid in sorted_ids[:evict_count]:
+                self._health.pop(aid, None)
+                self._mailboxes.pop(aid, None)
 
     # ------------------------------------------------------------------
     # Main entry point

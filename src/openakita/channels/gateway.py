@@ -1138,6 +1138,9 @@ class MessageGateway:
         # 启动消息处理循环
         self._processing_task = asyncio.create_task(self._process_loop())
 
+        # 启动 per-session 字典清理任务（每 10 分钟清理不活跃的 session 条目）
+        self._session_dict_cleanup_task = asyncio.create_task(self._session_dict_cleanup_loop())
+
         if failed:
             logger.info(
                 f"MessageGateway started with {len(started)}/{len(self._adapters)} adapters"
@@ -1344,6 +1347,13 @@ class MessageGateway:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._processing_task
 
+        # 停止 per-session 字典清理任务
+        cleanup_task = getattr(self, "_session_dict_cleanup_task", None)
+        if cleanup_task:
+            cleanup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cleanup_task
+
         # 停止所有适配器
         for name, adapter in self._adapters.items():
             try:
@@ -1353,6 +1363,69 @@ class MessageGateway:
                 logger.error(f"Failed to stop adapter {name}: {e}")
 
         logger.info("MessageGateway stopped")
+
+    async def _session_dict_cleanup_loop(self) -> None:
+        """定期清理 per-session 字典中不活跃的条目，防止内存泄漏。"""
+        while self._running:
+            try:
+                await asyncio.sleep(600)  # 每 10 分钟清理一次
+                self._cleanup_stale_session_dicts()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"[Gateway] Session dict cleanup error: {e}")
+
+    def _cleanup_stale_session_dicts(self) -> None:
+        """清理不再活跃的 session 对应的字典条目。
+
+        只清理当前未在处理中的 session_key，保留正在活跃的。
+        """
+        active_keys = {k for k, v in self._processing_sessions.items() if v}
+        cleaned = 0
+
+        # 清理 _interrupt_queues 中空闲且非活跃的条目
+        stale = [k for k in self._interrupt_queues if k not in active_keys]
+        for k in stale:
+            q = self._interrupt_queues[k]
+            if q.empty():
+                del self._interrupt_queues[k]
+                cleaned += 1
+
+        # 清理 _processing_sessions 中 False 值的条目
+        stale = [k for k, v in self._processing_sessions.items() if not v]
+        for k in stale:
+            del self._processing_sessions[k]
+            cleaned += 1
+
+        # 清理 _interrupt_callbacks 中非活跃的条目
+        stale = [k for k in self._interrupt_callbacks if k not in active_keys]
+        for k in stale:
+            del self._interrupt_callbacks[k]
+            cleaned += 1
+
+        # 清理 _progress_buffers 中空的条目
+        stale = [k for k, v in self._progress_buffers.items() if not v]
+        for k in stale:
+            del self._progress_buffers[k]
+            cleaned += 1
+
+        # 清理 _progress_flush_tasks 中已完成的条目
+        stale = [k for k, t in self._progress_flush_tasks.items() if t.done()]
+        for k in stale:
+            del self._progress_flush_tasks[k]
+            cleaned += 1
+
+        # 清理 ModelCommandHandler 中过期的切换会话
+        stale = [
+            k for k, s in self._model_cmd_handler._switch_sessions.items()
+            if s.is_expired
+        ]
+        for k in stale:
+            del self._model_cmd_handler._switch_sessions[k]
+            cleaned += 1
+
+        if cleaned:
+            logger.debug(f"[Gateway] Cleaned {cleaned} stale session dict entries")
 
     def set_brain(self, brain: "Brain") -> None:
         """

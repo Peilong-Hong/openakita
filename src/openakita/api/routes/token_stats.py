@@ -221,6 +221,17 @@ async def context(request: Request):
         return {"error": "agent not available"}
 
     try:
+        # Prefer pre-computed summary (survives cleanup of large buffers)
+        cached = getattr(actual, "_last_usage_summary", None)
+        if cached and "context_tokens" in cached and "context_limit" in cached:
+            ctx = cached["context_tokens"]
+            limit = cached["context_limit"]
+            return {
+                "context_tokens": ctx,
+                "context_limit": limit,
+                "percent": round(ctx / limit * 100, 1) if limit else 0,
+            }
+
         re = getattr(actual, "reasoning_engine", None)
         ctx_mgr = getattr(actual, "context_manager", None) or getattr(re, "_context_manager", None)
         if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
