@@ -399,6 +399,7 @@ class Agent:
 
         # 动态工具列表（基础工具 + 技能工具）
         self._tools = list(BASE_TOOLS)
+        self._skill_tool_names: set[str] = set()
 
         # Add desktop tools on Windows
         if _DESKTOP_AVAILABLE:
@@ -482,7 +483,7 @@ class Agent:
             skill_loader=self.skill_loader,
             skill_catalog=self.skill_catalog,
             shell_tool=self.shell_tool,
-            on_skill_loaded=self._update_skill_tools,
+            on_skill_loaded=self._on_skill_manager_loaded,
         )
 
         # 提示词组装器（委托自 _build_system_prompt 等）
@@ -1112,18 +1113,23 @@ class Agent:
                 break
 
     def _update_skill_tools(self) -> None:
-        """更新工具列表，确保系统技能的 tool_name 映射到正确的 handler。
+        """同步系统技能的 tool_name → handler 映射到 handler_registry。
 
         技能加载后，系统技能（system: true）可能定义了 tool_name 和 handler 字段。
         这些映射需要同步到 handler_registry，否则 LLM 调用对应工具时会返回 "Tool not found"。
 
-        仅补充尚未注册的映射，不覆盖 _init_handlers() 中已有的映射。
+        此方法执行双向同步:
+        1. 添加新技能定义的映射（不覆盖 _init_handlers 内置映射）
+        2. 清理已不存在于 skill_registry 中的旧映射（仅清理由技能动态添加的）
         """
+        current_skill_tools: set[str] = set()
+
         for skill in self.skill_registry.list_system_skills():
             tool_name = skill.tool_name
             handler_name = skill.handler
             if not tool_name or not handler_name:
                 continue
+            current_skill_tools.add(tool_name)
             if self.handler_registry.has_tool(tool_name):
                 continue
             if not self.handler_registry.has_handler(handler_name):
@@ -1134,6 +1140,35 @@ class Agent:
                 continue
             self.handler_registry.map_tool_to_handler(tool_name, handler_name)
             logger.info(f"Mapped skill tool: {tool_name} -> {handler_name}")
+
+        stale = self._skill_tool_names - current_skill_tools
+        for tool_name in stale:
+            if self.handler_registry.unmap_tool(tool_name):
+                logger.info(f"Unmapped stale skill tool: {tool_name}")
+
+        self._skill_tool_names = current_skill_tools
+
+    @staticmethod
+    def notify_pools_skills_changed() -> None:
+        """通知所有全局 Agent 实例池技能已变更。
+
+        池中旧版本 Agent 将在下次 get_or_create 时惰性重建。
+        """
+        try:
+            from openakita.main import _desktop_pool, _orchestrator
+            for src in (_desktop_pool, _orchestrator):
+                if src is None:
+                    continue
+                pool = getattr(src, "_pool", src)
+                if hasattr(pool, "notify_skills_changed"):
+                    pool.notify_skills_changed()
+        except (ImportError, AttributeError):
+            pass
+
+    def _on_skill_manager_loaded(self) -> None:
+        """SkillManager 安装完技能后的回调：同步映射 + 通知池。"""
+        self._update_skill_tools()
+        self.notify_pools_skills_changed()
 
     async def _install_skill(
         self,
@@ -1237,6 +1272,7 @@ class Agent:
                 if loaded:
                     self._skill_catalog_text = self.skill_catalog.generate_catalog()
                     self._update_skill_tools()
+                    self.notify_pools_skills_changed()
                     logger.info(f"Skill installed from git: {skill_name}")
             except Exception as e:
                 logger.error(f"Failed to load installed skill: {e}")
@@ -1338,6 +1374,7 @@ class Agent:
                 if loaded:
                     self._skill_catalog_text = self.skill_catalog.generate_catalog()
                     self._update_skill_tools()
+                    self.notify_pools_skills_changed()
                     logger.info(f"Skill installed from URL: {skill_name}")
             except Exception as e:
                 logger.error(f"Failed to load installed skill: {e}")
@@ -4147,11 +4184,15 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
           [执行摘要]
           - tool_name({key: val}) → result_hint...
 
+          [子Agent工作总结]
+          1. [网探] 任务: ... | 状态: ✅完成 | 交付文件: ...
+          2. [文助] 任务: ... | 状态: ✅完成 | 交付文件: ...
+
         供 session 保存 assistant 消息时追加，确保下一轮 LLM 能看到上一轮做了什么。
 
-        对委派类工具（delegate_to_agent / delegate_parallel / spawn_agent），
-        优先使用 sub_agent_records 中的结构化 work_summary 而非粗暴截断，
-        保证子 Agent 的任务、状态、交付物、关键结果能完整保留到对话历史中。
+        对委派类工具，在执行摘要末尾附加独立的 [子Agent工作总结] 区块，
+        包含 sub_agent_records 中的结构化 work_summary，保证子 Agent 的
+        任务、状态、交付物、关键结果完整保留到对话历史中。
 
         空字符串表示无工具调用。
         """
@@ -4160,15 +4201,15 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         if not trace:
             return ""
 
-        work_summaries = self._collect_work_summaries()
-
         lines: list[str] = []
-        _ws_idx = 0
+        has_delegation = False
         for it in trace:
             for tc in it.get("tool_calls", []):
                 name = tc.get("name", "")
                 if not name:
                     continue
+                if name in self._DELEGATION_TOOLS:
+                    has_delegation = True
                 tc_input = tc.get("input", {})
                 param_hint = ""
                 if isinstance(tc_input, dict):
@@ -4179,21 +4220,14 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                     param_hint = str(kv) if kv else ""
 
                 result_hint = ""
-                if name in self._DELEGATION_TOOLS and _ws_idx < len(work_summaries):
-                    result_hint = work_summaries[_ws_idx]
-                    _ws_idx += 1
-                else:
-                    for tr in it.get("tool_results", []):
-                        if tr.get("tool_use_id") == tc.get("id", ""):
-                            raw = str(tr.get("result_content", tr.get("result_preview", "")))
-                            if name in self._DELEGATION_TOOLS:
-                                max_len = 800
-                            else:
-                                max_len = 120
-                            result_hint = raw[:max_len].replace("\n", " ")
-                            if len(raw) > max_len:
-                                result_hint += "..."
-                            break
+                for tr in it.get("tool_results", []):
+                    if tr.get("tool_use_id") == tc.get("id", ""):
+                        raw = str(tr.get("result_content", tr.get("result_preview", "")))
+                        max_len = 800 if name in self._DELEGATION_TOOLS else 120
+                        result_hint = raw[:max_len].replace("\n", " ")
+                        if len(raw) > max_len:
+                            result_hint += "..."
+                        break
 
                 line = f"- {name}"
                 if param_hint:
@@ -4203,17 +4237,31 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 lines.append(line)
         if not lines:
             return ""
-        return "\n\n[执行摘要]\n" + "\n".join(lines)
 
-    def _collect_work_summaries(self) -> list[str]:
-        """Collect work_summary strings from sub_agent_records for the current session."""
+        result = "\n\n[执行摘要]\n" + "\n".join(lines)
+
+        if has_delegation:
+            ws_section = self._build_work_summary_section()
+            if ws_section:
+                result += ws_section
+
+        return result
+
+    def _build_work_summary_section(self) -> str:
+        """Build [子Agent工作总结] section from sub_agent_records."""
         session = self._current_session
         if not session:
-            return []
+            return ""
         records = getattr(getattr(session, "context", None), "sub_agent_records", None)
         if not records:
-            return []
-        return [r.get("work_summary", "") for r in records if r.get("work_summary")]
+            return ""
+        summaries = [r.get("work_summary", "") for r in records if r.get("work_summary")]
+        if not summaries:
+            return ""
+        lines = ["\n\n[子Agent工作总结]"]
+        for i, ws in enumerate(summaries, 1):
+            lines.append(f"{i}. {ws}")
+        return "\n".join(lines)
 
     def _build_chain_summary(self, react_trace: list[dict]) -> list[dict] | None:
         """

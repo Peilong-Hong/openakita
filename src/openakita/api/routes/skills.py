@@ -81,7 +81,24 @@ def _apply_allowlist_and_rebuild_catalog(request: Request) -> int:
     if hasattr(actual_agent, "_update_skill_tools"):
         actual_agent._update_skill_tools()
 
+    # 通知所有 Agent 池技能已变更，使池中旧 Agent 在下次使用时重建
+    _notify_pools_skills_changed(request)
+
     return removed
+
+
+def _notify_pools_skills_changed(request: Request) -> None:
+    """通知所有 Agent 实例池全局技能已变更。"""
+    for pool_attr in ("agent_pool", "orchestrator"):
+        obj = getattr(request.app.state, pool_attr, None)
+        if obj is None:
+            continue
+        pool = getattr(obj, "_pool", obj)
+        if hasattr(pool, "notify_skills_changed"):
+            try:
+                pool.notify_skills_changed()
+            except Exception as e:
+                logger.warning(f"Failed to notify pool ({pool_attr}): {e}")
 
 
 @router.get("/api/skills")

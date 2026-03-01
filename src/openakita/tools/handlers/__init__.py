@@ -170,6 +170,17 @@ class SystemHandlerRegistry:
         """检查处理器是否存在"""
         return handler_name in self._handlers
 
+    def unmap_tool(self, tool_name: str) -> bool:
+        """移除单个工具名到处理器的映射。
+
+        Returns:
+            是否成功移除（不存在时返回 False）
+        """
+        if tool_name in self._tool_to_handler:
+            del self._tool_to_handler[tool_name]
+            return True
+        return False
+
     def has_tool(self, tool_name: str) -> bool:
         """检查工具是否已映射"""
         return tool_name in self._tool_to_handler

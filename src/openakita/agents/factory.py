@@ -61,27 +61,35 @@ class AgentFactory:
         registry = agent.skill_registry
         all_skills = [skill.name for skill in registry.list_all()]
 
+        removed = 0
         if profile.skills_mode == SkillsMode.INCLUSIVE:
             keep = set(profile.skills)
             for skill_name in all_skills:
                 if skill_name not in keep:
                     registry.unregister(skill_name)
+                    removed += 1
         elif profile.skills_mode == SkillsMode.EXCLUSIVE:
             exclude = set(profile.skills)
             for skill_name in all_skills:
                 if skill_name in exclude:
                     registry.unregister(skill_name)
+                    removed += 1
+
+        if removed:
+            agent.skill_catalog.invalidate_cache()
+            agent._update_skill_tools()
 
 
 class _PoolEntry:
-    __slots__ = ("agent", "profile_id", "session_id", "created_at", "last_used")
+    __slots__ = ("agent", "profile_id", "session_id", "created_at", "last_used", "skills_version")
 
-    def __init__(self, agent: Agent, profile_id: str, session_id: str):
+    def __init__(self, agent: Agent, profile_id: str, session_id: str, skills_version: int = 0):
         self.agent = agent
         self.profile_id = profile_id
         self.session_id = session_id
         self.created_at = time.monotonic()
         self.last_used = time.monotonic()
+        self.skills_version = skills_version
 
     def touch(self) -> None:
         self.last_used = time.monotonic()
@@ -117,6 +125,7 @@ class AgentInstancePool:
         # Per-composite-key locks for concurrent creation
         self._create_locks: dict[str, asyncio.Lock] = {}
         self._reaper_task: asyncio.Task | None = None
+        self._skills_version: int = 0
 
     @staticmethod
     def _make_key(session_id: str, profile_id: str) -> str:
@@ -136,6 +145,11 @@ class AgentInstancePool:
         self._pool.clear()
         logger.info("AgentInstancePool stopped")
 
+    def notify_skills_changed(self) -> None:
+        """全局技能变更通知 — 递增版本号使池中已有 Agent 在下次使用时重建。"""
+        self._skills_version += 1
+        logger.info(f"Pool skills version bumped to {self._skills_version}")
+
     async def get_or_create(
         self, session_id: str, profile: AgentProfile,
     ) -> Agent:
@@ -144,13 +158,28 @@ class AgentInstancePool:
         Key = session_id::profile_id，同 session 不同 profile 各自独立。
         All dict operations are safe under asyncio's single-threaded event loop;
         only the async create_lock is needed to serialize factory.create() calls.
+
+        当全局技能版本变更时，旧的 Agent 会被丢弃并重建，
+        确保技能安装/卸载/启禁用等操作能同步到所有池 Agent。
         """
         key = self._make_key(session_id, profile.id)
+        current_version = self._skills_version
 
         entry = self._pool.get(key)
         if entry:
-            entry.touch()
-            return entry.agent
+            if entry.skills_version >= current_version:
+                entry.touch()
+                return entry.agent
+            logger.info(
+                f"Pool agent stale (skills_version {entry.skills_version} < {current_version}), "
+                f"recreating: session={session_id}, profile={profile.id}"
+            )
+            self._pool.pop(key, None)
+            try:
+                if hasattr(entry.agent, "shutdown"):
+                    asyncio.ensure_future(entry.agent.shutdown())
+            except Exception:
+                pass
 
         if key not in self._create_locks:
             self._create_locks[key] = asyncio.Lock()
@@ -158,12 +187,12 @@ class AgentInstancePool:
 
         async with create_lock:
             entry = self._pool.get(key)
-            if entry:
+            if entry and entry.skills_version >= current_version:
                 entry.touch()
                 return entry.agent
 
             agent = await self._factory.create(profile)
-            new_entry = _PoolEntry(agent, profile.id, session_id)
+            new_entry = _PoolEntry(agent, profile.id, session_id, current_version)
             self._pool[key] = new_entry
 
         logger.info(
