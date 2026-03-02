@@ -1680,7 +1680,10 @@ export function ChatView({
     const expectedCount = activeMeta?.messageCount || 0;
     void hydrateConversationMessages(activeConvId, expectedCount);
     isInitialScrollRef.current = true;
-  }, [activeConvId, conversations, hydrateConversationMessages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- conversations 故意排除：
+    // 此 effect 语义是"切换对话时加载消息"，不应因 messageCount/title 等元数据变更而重新 hydrate，
+    // 否则流结束后 setConversations 更新 messageCount 会触发竞态覆盖。
+  }, [activeConvId, hydrateConversationMessages]);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isInitialScrollRef = useRef(true); // first scroll should be instant, not smooth
