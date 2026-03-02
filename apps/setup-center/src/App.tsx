@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -453,6 +453,148 @@ function envGet(env: EnvMap, key: string, fallback = "") {
 
 function envSet(env: EnvMap, key: string, value: string): EnvMap {
   return { ...env, [key]: value };
+}
+
+// ── Shared context for env-field components (defined outside App to keep stable identity) ──
+
+interface EnvFieldCtx {
+  envDraft: EnvMap;
+  setEnvDraft: React.Dispatch<React.SetStateAction<EnvMap>>;
+  secretShown: Record<string, boolean>;
+  setSecretShown: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  busy: string | null;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}
+
+const EnvFieldContext = createContext<EnvFieldCtx | null>(null);
+
+function useEnvField(): EnvFieldCtx {
+  const ctx = useContext(EnvFieldContext);
+  if (!ctx) throw new Error("EnvFieldContext not provided");
+  return ctx;
+}
+
+function FieldText({
+  k, label, placeholder, help, type,
+}: { k: string; label: string; placeholder?: string; help?: string; type?: "text" | "password"; }) {
+  const { envDraft, setEnvDraft, secretShown, setSecretShown, busy, t } = useEnvField();
+  const isSecret = (type || "text") === "password";
+  const shown = !!secretShown[k];
+  return (
+    <div className="field">
+      <div className="labelRow">
+        <div className="label">
+          {label}
+          {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
+        </div>
+        {k ? <div className="help">{k}</div> : null}
+      </div>
+      <div style={{ position: "relative" }}>
+        <input
+          value={envGet(envDraft, k)}
+          onChange={(e) => setEnvDraft((m) => envSet(m, k, e.target.value))}
+          placeholder={placeholder}
+          type={isSecret ? (shown ? "text" : "password") : "text"}
+          style={isSecret ? { paddingRight: 44 } : undefined}
+        />
+        {isSecret && (
+          <button type="button" className="btnEye"
+            onClick={() => setSecretShown((m) => ({ ...m, [k]: !m[k] }))}
+            disabled={!!busy}
+            title={shown ? t("skills.hide") : t("skills.show")}>
+            {shown ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FieldBool({ k, label, help, defaultValue }: { k: string; label: string; help?: string; defaultValue?: boolean }) {
+  const { envDraft, setEnvDraft, t } = useEnvField();
+  const v = envGet(envDraft, k, defaultValue ? "true" : "false").toLowerCase() === "true";
+  return (
+    <div className="field">
+      <div className="labelRow">
+        <div className="label">
+          {label}
+          {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
+        </div>
+        <div className="help">{k}</div>
+      </div>
+      <label className="pill" style={{ cursor: "pointer" }}>
+        <input style={{ width: 16, height: 16 }} type="checkbox" checked={v}
+          onChange={(e) => setEnvDraft((m) => envSet(m, k, String(e.target.checked)))} />
+        {t("skills.enabled")}
+      </label>
+    </div>
+  );
+}
+
+function FieldSelect({
+  k, label, options, help,
+}: { k: string; label: string; options: { value: string; label: string }[]; help?: string; }) {
+  const { envDraft, setEnvDraft } = useEnvField();
+  return (
+    <div className="field">
+      <div className="labelRow">
+        <div className="label">
+          {label}
+          {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
+        </div>
+        {k ? <div className="help">{k}</div> : null}
+      </div>
+      <select
+        value={envGet(envDraft, k)}
+        onChange={(e) => setEnvDraft((m) => envSet(m, k, e.target.value))}
+      >
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function FieldCombo({
+  k, label, options, placeholder, help,
+}: { k: string; label: string; options: { value: string; label: string }[]; placeholder?: string; help?: string; }) {
+  const { envDraft, setEnvDraft, t } = useEnvField();
+  const currentVal = envGet(envDraft, k);
+  const isPreset = options.some((o) => o.value === currentVal);
+  return (
+    <div className="field">
+      <div className="labelRow">
+        <div className="label">
+          {label}
+          {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
+        </div>
+        {k ? <div className="help">{k}</div> : null}
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <select
+          style={{ flex: "0 0 auto", minWidth: 140 }}
+          value={isPreset ? currentVal : "__custom__"}
+          onChange={(e) => {
+            if (e.target.value !== "__custom__") {
+              setEnvDraft((m) => envSet(m, k, e.target.value));
+            }
+          }}
+        >
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+          <option value="__custom__">{t("common.custom") || "\u81ea\u5b9a\u4e49..."}</option>
+        </select>
+        {(!isPreset || currentVal === "") && (
+          <input
+            style={{ flex: 1 }}
+            value={currentVal}
+            onChange={(e) => setEnvDraft((m) => envSet(m, k, e.target.value))}
+            placeholder={placeholder || t("common.custom") || "\u81ea\u5b9a\u4e49\u8f93\u5165..."}
+          />
+        )}
+      </div>
+    </div>
+  );
 }
 
 type StepId =
@@ -1326,6 +1468,10 @@ export function App() {
   // unified env draft (full coverage)
   const [envDraft, setEnvDraft] = useState<EnvMap>({});
   const envLoadedForWs = useRef<string | null>(null);
+
+  const envFieldCtx = useMemo<EnvFieldCtx>(() => ({
+    envDraft, setEnvDraft, secretShown, setSecretShown, busy, t,
+  }), [envDraft, secretShown, busy, t]);
 
   async function refreshAll() {
     setError(null);
@@ -5665,62 +5811,6 @@ export function App() {
     );
   }
 
-  // ── Helper: env field for IM / Tools / Agent config pages ──
-  function FieldText({
-    k, label, placeholder, help, type,
-  }: { k: string; label: string; placeholder?: string; help?: string; type?: "text" | "password"; }) {
-    const isSecret = (type || "text") === "password";
-    const shown = !!secretShown[k];
-    return (
-      <div className="field">
-        <div className="labelRow">
-          <div className="label">
-            {label}
-            {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
-          </div>
-          {k ? <div className="help">{k}</div> : null}
-        </div>
-        <div style={{ position: "relative" }}>
-          <input
-            value={envGet(envDraft, k)}
-            onChange={(e) => setEnvDraft((m) => envSet(m, k, e.target.value))}
-            placeholder={placeholder}
-            type={isSecret ? (shown ? "text" : "password") : "text"}
-            style={isSecret ? { paddingRight: 44 } : undefined}
-          />
-          {isSecret && (
-            <button type="button" className="btnEye"
-              onClick={() => setSecretShown((m) => ({ ...m, [k]: !m[k] }))}
-              disabled={!!busy}
-              title={shown ? t("skills.hide") : t("skills.show")}>
-              {shown ? <IconEyeOff size={16} /> : <IconEye size={16} />}
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  function FieldBool({ k, label, help, defaultValue }: { k: string; label: string; help?: string; defaultValue?: boolean }) {
-    const v = envGet(envDraft, k, defaultValue ? "true" : "false").toLowerCase() === "true";
-    return (
-      <div className="field">
-        <div className="labelRow">
-          <div className="label">
-            {label}
-            {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
-          </div>
-          <div className="help">{k}</div>
-        </div>
-        <label className="pill" style={{ cursor: "pointer" }}>
-          <input style={{ width: 16, height: 16 }} type="checkbox" checked={v}
-            onChange={(e) => setEnvDraft((m) => envSet(m, k, String(e.target.checked)))} />
-          {t("skills.enabled")}
-        </label>
-      </div>
-    );
-  }
-
   /** 读取并显示当前 Telegram 配对码（从 data/telegram/pairing/pairing_code.txt 文件）*/
   function TelegramPairingCodeHint() {
     const [currentCode, setCurrentCode] = useState<string | null>(null);
@@ -5767,72 +5857,6 @@ export function App() {
           onClick={loadCode}
           disabled={loading}
         >↻ {t("common.refresh")}</button>
-      </div>
-    );
-  }
-
-  function FieldSelect({
-    k, label, options, help,
-  }: { k: string; label: string; options: { value: string; label: string }[]; help?: string; }) {
-    return (
-      <div className="field">
-        <div className="labelRow">
-          <div className="label">
-            {label}
-            {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
-          </div>
-          {k ? <div className="help">{k}</div> : null}
-        </div>
-        <select
-          value={envGet(envDraft, k)}
-          onChange={(e) => setEnvDraft((m) => envSet(m, k, e.target.value))}
-        >
-          {options.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-      </div>
-    );
-  }
-
-  function FieldCombo({
-    k, label, options, placeholder, help,
-  }: { k: string; label: string; options: { value: string; label: string }[]; placeholder?: string; help?: string; }) {
-    const currentVal = envGet(envDraft, k);
-    const isPreset = options.some((o) => o.value === currentVal);
-    return (
-      <div className="field">
-        <div className="labelRow">
-          <div className="label">
-            {label}
-            {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
-          </div>
-          {k ? <div className="help">{k}</div> : null}
-        </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <select
-            style={{ flex: "0 0 auto", minWidth: 140 }}
-            value={isPreset ? currentVal : "__custom__"}
-            onChange={(e) => {
-              if (e.target.value !== "__custom__") {
-                setEnvDraft((m) => envSet(m, k, e.target.value));
-              }
-            }}
-          >
-            {options.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-            <option value="__custom__">{t("common.custom") || "自定义..."}</option>
-          </select>
-          {(!isPreset || currentVal === "") && (
-            <input
-              style={{ flex: 1 }}
-              value={currentVal}
-              onChange={(e) => setEnvDraft((m) => envSet(m, k, e.target.value))}
-              placeholder={placeholder || t("common.custom") || "自定义输入..."}
-            />
-          )}
-        </div>
       </div>
     );
   }
@@ -8599,6 +8623,7 @@ export function App() {
   // ── Onboarding 全屏模式 (隐藏侧边栏和顶部状态栏) ──
   if (view === "onboarding") {
     return (
+      <EnvFieldContext.Provider value={envFieldCtx}>
       <div className="onboardingShell">
         {renderOnboarding()}
 
@@ -8624,10 +8649,12 @@ export function App() {
           </div>
         )}
       </div>
+      </EnvFieldContext.Provider>
     );
   }
 
   return (
+    <EnvFieldContext.Provider value={envFieldCtx}>
     <div className={`appShell ${sidebarCollapsed ? "appShellCollapsed" : ""}`}>
       <aside className={`sidebar ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
         <div className="sidebarHeader">
@@ -9187,6 +9214,7 @@ export function App() {
         apiBase={httpApiBase()}
       />
     </div>
+    </EnvFieldContext.Provider>
   );
 }
 
