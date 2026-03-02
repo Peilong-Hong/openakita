@@ -71,6 +71,17 @@ import { useVersionCheck, compareSemver } from "./hooks/useVersionCheck";
 
 const THEME_I18N_KEYS: Record<Theme, string> = { system: "topbar.themeSystem", dark: "topbar.themeDark", light: "topbar.themeLight" };
 
+interface EnvFieldCtx {
+  envDraft: EnvMap;
+  setEnvDraft: React.Dispatch<React.SetStateAction<EnvMap>>;
+  secretShown: Record<string, boolean>;
+  setSecretShown: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  busy: string | null;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}
+
+const EnvFieldContext = createContext<EnvFieldCtx | null>(null);
+
 export function App() {
   const { t, i18n } = useTranslation();
   const [themePrefState, setThemePrefState] = useState<Theme>(getThemePref());

@@ -806,15 +806,6 @@ export function SkillManager({
     }
   }, [manualUrl, loadSkills, venvDir, currentWorkspaceId, dataMode, serviceRunning, apiBaseUrl, t, onNotice]);
 
-  // Debounced search: trigger API call when user stops typing
-  useEffect(() => {
-    if (tab !== "marketplace") return;
-    const timer = setTimeout(() => {
-      searchMarketplace(marketSearch);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [marketSearch, tab]);  // eslint-disable-line react-hooks/exhaustive-deps
-
   return (
     <>
       {/* Tab 切换 */}

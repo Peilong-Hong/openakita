@@ -271,6 +271,12 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
   const [messages, setMessages] = useState<IMMessage[]>([]);
   const [totalMessages, setTotalMessages] = useState(0);
 
+  const getChannelDisplayName = useCallback((ch: IMChannel): string => {
+    const key = `status.${(ch.channel || "").toLowerCase()}`;
+    const translated = t(key);
+    return translated && translated !== key ? translated : (ch.name || ch.channel);
+  }, [t]);
+
   const fetchChannels = useCallback(async () => {
     if (!serviceRunning) return;
     try {
