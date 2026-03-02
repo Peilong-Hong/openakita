@@ -2333,6 +2333,10 @@ export function ChatView({
   // ── 删除对话 ──
   const deleteConversation = useCallback((convId: string, e?: React.MouseEvent) => {
     if (e) { e.stopPropagation(); e.preventDefault(); }
+    const conv = conversations.find((c) => c.id === convId);
+    const title = conv?.title || t("chat.defaultTitle");
+    if (!window.confirm(t("chat.confirmDeleteConversation", { title }))) return;
+
     try { localStorage.removeItem(STORAGE_KEY_MSGS_PREFIX + convId); } catch {}
     setMessageQueue(prev => prev.filter(m => m.convId !== convId));
     const ctx = streamContexts.current.get(convId);
@@ -2343,6 +2347,14 @@ export function ChatView({
       streamContexts.current.delete(convId);
       setStreamingTick(t => t + 1);
     }
+
+    // 通知后端删除（不阻塞 UI）
+    if (serviceRunning) {
+      fetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}`, {
+        method: "DELETE",
+      }).catch(() => {});
+    }
+
     // 如果删除的是当前激活的对话，切换到下一个或清空
     if (convId === activeConvId) {
       setConversations((prev) => {
@@ -2362,7 +2374,7 @@ export function ChatView({
     } else {
       setConversations((prev) => prev.filter((c) => c.id !== convId));
     }
-  }, [activeConvId]);
+  }, [activeConvId, conversations, serviceRunning, apiBaseUrl, t]);
 
   // ── 置顶/取消置顶 ──
   const togglePinConversation = useCallback((convId: string) => {

@@ -109,6 +109,8 @@
     "processing": "Processing...",
     "processed": "Processed ({{seconds}}s)",
     "deleteConversation": "Delete Conversation",
+    "confirmDeleteConversation": "Are you sure you want to delete \"{{title}}\"? This action cannot be undone.",
+    "defaultTitle": "Chat",
     "pinConversation": "Pin",
     "unpinConversation": "Unpin",
     "renameConversation": "Rename",

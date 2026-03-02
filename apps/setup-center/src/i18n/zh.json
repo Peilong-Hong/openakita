@@ -109,6 +109,8 @@
     "processing": "处理中...",
     "processed": "已处理 ({{seconds}}s)",
     "deleteConversation": "删除对话",
+    "confirmDeleteConversation": "确定要删除对话「{{title}}」吗？删除后无法恢复。",
+    "defaultTitle": "对话",
     "pinConversation": "置顶",
     "unpinConversation": "取消置顶",
     "renameConversation": "重命名",

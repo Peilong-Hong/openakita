@@ -1,6 +1,6 @@
 """
 Sessions route: GET /api/sessions, GET /api/sessions/{conversation_id}/history,
-POST /api/sessions/generate-title
+DELETE /api/sessions/{conversation_id}, POST /api/sessions/generate-title
 
 提供桌面端 session 恢复能力：前端启动时可从后端加载对话列表和历史消息。
 """
@@ -118,6 +118,32 @@ async def get_session_history(
         result.append(entry)
 
     return {"messages": result}
+
+
+@router.delete("/api/sessions/{conversation_id}")
+async def delete_session(
+    request: Request,
+    conversation_id: str,
+    channel: str = "desktop",
+    user_id: str = "desktop_user",
+):
+    """Delete a session by chat_id.
+
+    Closes the session and removes it from the session manager.
+    Conversation history in memory DB is preserved for potential recovery.
+    """
+    session_manager = getattr(request.app.state, "session_manager", None)
+    if not session_manager:
+        return {"ok": False, "error": "session_manager not available"}
+
+    session_key = f"{channel}:{conversation_id}:{user_id}"
+    removed = session_manager.close_session(session_key)
+    if removed:
+        logger.info(f"[Sessions] Deleted session via API: {session_key}")
+    else:
+        logger.debug(f"[Sessions] Session not found for deletion: {session_key}")
+
+    return {"ok": True, "removed": removed}
 
 
 @router.post("/api/sessions/generate-title")
