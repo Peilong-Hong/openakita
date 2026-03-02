@@ -86,12 +86,16 @@ async def get_session_history(
     if not session:
         return {"messages": []}
 
+    _TOOL_SUMMARY_MARKER = "\n\n[执行摘要]"
+
     result = []
     for i, msg in enumerate(session.context.messages):
         role = msg.get("role", "user")
         content = msg.get("content", "")
         if not isinstance(content, str):
             content = str(content) if content else ""
+        if role == "assistant" and _TOOL_SUMMARY_MARKER in content:
+            content = content[:content.index(_TOOL_SUMMARY_MARKER)]
         ts = msg.get("timestamp", "")
         epoch_ms = 0
         if ts:
