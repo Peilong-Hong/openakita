@@ -77,16 +77,36 @@ def normalize_macos_bundled_python(output_dir: Path) -> None:
         return
 
     internal_dir = output_dir / "_internal"
+    wanted = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+    app_in_resources = internal_dir / "Resources" / "Python.app"
+    app_in_framework = internal_dir / "Python.framework" / "Versions" / wanted / "Resources" / "Python.app"
+
+    # Keep both common launcher-relative layouts valid:
+    # - _internal/Resources/Python.app
+    # - _internal/Python.framework/Versions/<ver>/Resources/Python.app
+    if app_in_resources.exists() and not app_in_framework.exists():
+        app_in_framework.parent.mkdir(parents=True, exist_ok=True)
+        rel = os.path.relpath(app_in_resources, app_in_framework.parent)
+        app_in_framework.symlink_to(rel)
+        print(f"  [OK] Added framework-path Python.app symlink -> {app_in_resources}")
+    elif app_in_framework.exists() and not app_in_resources.exists():
+        app_in_resources.parent.mkdir(parents=True, exist_ok=True)
+        rel = os.path.relpath(app_in_framework, app_in_resources.parent)
+        app_in_resources.symlink_to(rel)
+        print(f"  [OK] Added resources-path Python.app symlink -> {app_in_framework}")
+
     framework_candidates = sorted(
         internal_dir.glob("Python.framework/Versions/*/Resources/Python.app/Contents/MacOS/Python")
     )
-    if not framework_candidates:
-        print("  [WARN] macOS framework interpreter not found; skip python entrypoint normalization")
+    resources_candidate = internal_dir / "Resources" / "Python.app" / "Contents" / "MacOS" / "Python"
+    candidates = framework_candidates + ([resources_candidate] if resources_candidate.exists() else [])
+    if not candidates:
+        print("  [WARN] macOS Python.app interpreter not found; skip python entrypoint normalization")
         return
 
-    # Prefer the same major.minor as current build interpreter, fallback to latest.
-    target = framework_candidates[-1]
-    wanted = f"{sys.version_info.major}.{sys.version_info.minor}"
+    # Prefer framework layout with matching major.minor; fallback to first existing candidate.
+    target = candidates[0]
     for cand in framework_candidates:
         if f"/Versions/{wanted}/" in str(cand):
             target = cand
