@@ -68,31 +68,14 @@ def ensure_bundled_pth_file(output_dir: Path) -> None:
 
 def _bundled_python_env(internal_dir: Path) -> dict:
     """Build environment dict for invoking standalone _internal/python.exe."""
+    _ = internal_dir  # keep signature stable for callers
     env = dict(os.environ)
     for key in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
                 "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
         env.pop(key, None)
-
-    # On macOS framework Python, forcing PYTHONHOME to _internal can break
-    # stdlib resolution (e.g. importlib) during post-build contract checks.
-    # Let the framework launcher resolve its own home.
-    if sys.platform == "darwin":
-        env["PYTHONNOUSERSITE"] = "1"
-        return env
-
-    env["PYTHONHOME"] = str(internal_dir)
-    parts = []
-    base_lib = internal_dir / "base_library.zip"
-    if base_lib.exists():
-        parts.append(str(base_lib))
-    parts.append(str(internal_dir))
-    lib = internal_dir / "Lib"
-    if lib.is_dir():
-        parts.append(str(lib))
-    dlls = internal_dir / "DLLs"
-    if dlls.is_dir():
-        parts.append(str(dlls))
-    env["PYTHONPATH"] = os.pathsep.join(parts)
+    # Let bundled interpreter decide its own stdlib path layout.
+    # Forcing PYTHONHOME/PYTHONPATH may break importlib on Linux/macOS bundles.
+    env["PYTHONNOUSERSITE"] = "1"
     return env
 
 
