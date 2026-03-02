@@ -46,14 +46,14 @@ jobs:
             suffix: "-ubuntu24-arm64"
           # macOS - Apple Silicon (arm64)
           - platform: macos-latest
-            bundles: "dmg"
+            bundles: "app,dmg"
             args: "--target aarch64-apple-darwin"
             rust_target: "aarch64-apple-darwin"
             build_mode: "core"
             suffix: "-macos-arm64"
           # macOS - Intel (x86_64)
           - platform: macos-15-intel
-            bundles: "dmg"
+            bundles: "app,dmg"
             args: "--target x86_64-apple-darwin"
             rust_target: "x86_64-apple-darwin"
             build_mode: "core"
