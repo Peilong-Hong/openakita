@@ -8912,9 +8912,9 @@ export function App() {
               </div>
               <div className="dialogFooter" style={{ justifyContent: "flex-end", gap: 8 }}>
                 <button className="btnSmall" onClick={() => { setConflictDialog(null); setPendingStartWsId(null); }}>{t("conflict.cancel")}</button>
-                <button className="btnSmall" style={{ background: "#e53935", color: "#fff", border: "none" }}
+                <button className="btnSmall" style={{ background: "#e53935", color: "#fff", borderColor: "transparent" }}
                   onClick={() => stopAndRestartService()} disabled={!!busy}>{t("conflict.stopAndRestart")}</button>
-                <button className="btnPrimary" style={{ padding: "6px 16px", borderRadius: 8 }}
+                <button className="btnSmall" style={{ background: "var(--brand)", color: "#fff", borderColor: "transparent" }}
                   onClick={() => connectToExistingLocalService()}>{t("conflict.connectExisting")}</button>
               </div>
             </div>
