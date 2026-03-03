@@ -1128,6 +1128,7 @@ export function App() {
   const [conflictDialog, setConflictDialog] = useState<{ pid: number; version: string } | null>(null);
   const [pendingStartWsId, setPendingStartWsId] = useState<string | null>(null); // workspace ID waiting for conflict resolution
   const [versionMismatch, setVersionMismatch] = useState<{ backend: string; desktop: string } | null>(null);
+  const [versionRestartAttempted, setVersionRestartAttempted] = useState(false);
   const [newRelease, setNewRelease] = useState<{ latest: string; current: string; url: string } | null>(null);
   // ── Auto-updater state ──
   const [updateAvailable, setUpdateAvailable] = useState<Update | null>(null);
@@ -4091,13 +4092,13 @@ export function App() {
   function checkVersionMismatch(backendVersion: string) {
     if (!backendVersion || backendVersion === "0.0.0-dev") return;
     if (!desktopVersion || desktopVersion === "0.0.0") return; // not yet loaded from Tauri
-    // Normalize: strip leading 'v'
     const bv = backendVersion.replace(/^v/, "");
     const dv = desktopVersion.replace(/^v/, "");
     if (bv !== dv) {
       setVersionMismatch({ backend: bv, desktop: dv });
     } else {
       setVersionMismatch(null);
+      setVersionRestartAttempted(false);
     }
   }
 
@@ -8906,16 +8907,35 @@ export function App() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 16 }}>⚠️</span>
               <span style={{ fontWeight: 600, fontSize: 13 }}>{t("version.mismatch")}</span>
-              <button style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "var(--muted)" }} onClick={() => setVersionMismatch(null)}>&times;</button>
+              <button style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "var(--muted)" }} onClick={() => { setVersionMismatch(null); setVersionRestartAttempted(false); }}>&times;</button>
             </div>
             <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-              {t("version.mismatchDetail", { backend: versionMismatch.backend, desktop: versionMismatch.desktop })}
+              {versionRestartAttempted
+                ? t("version.mismatchPersist", { backend: versionMismatch.backend, desktop: versionMismatch.desktop })
+                : t("version.mismatchDetail", { backend: versionMismatch.backend, desktop: versionMismatch.desktop })}
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {!versionRestartAttempted && (
+                <button className="btnPrimary btnSmall" style={{ fontSize: 11 }} disabled={!!busy} onClick={async () => {
+                  const wsId = currentWorkspaceId || workspaces[0]?.id;
+                  if (!wsId) return;
+                  setVersionRestartAttempted(true);
+                  setBusy(t("version.restarting"));
+                  setError(null);
+                  try {
+                    await doStopService(wsId);
+                    await waitForServiceDown("http://127.0.0.1:18900", 15000);
+                  } catch { /* stop errors are non-fatal */ }
+                  // doStartLocalService 内部调用 checkVersionMismatch 来判定版本是否仍不一致，
+                  // 由它全权管理 versionMismatch 状态；此处不手动覆盖。
+                  // 如果重启后版本一致 → checkVersionMismatch 会 setVersionMismatch(null)。
+                  // 如果仍不一致 → versionRestartAttempted=true → banner 显示"需要重新安装"。
+                  await doStartLocalService(wsId);
+                }}>{t("version.restartBackend")}</button>
+              )}
               <button className="btnSmall" style={{ fontSize: 11 }} onClick={() => {
                 navigator.clipboard.writeText(t("version.pipCommand")).then(() => setNotice(t("version.copied")));
               }}>{t("version.updatePip")}</button>
-              <code style={{ fontSize: 11, background: "var(--nav-hover)", padding: "2px 8px", borderRadius: 4, color: "var(--text)" }}>{t("version.pipCommand")}</code>
             </div>
           </div>
         )}

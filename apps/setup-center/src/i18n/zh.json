@@ -695,6 +695,9 @@
   "version": {
     "mismatch": "版本不一致",
     "mismatchDetail": "后端服务版本 {{backend}} 与桌面终端版本 {{desktop}} 不一致，可能导致功能异常。",
+    "mismatchPersist": "后端版本 {{backend}} 与桌面版本 {{desktop}} 仍然不一致。安装包内的后端版本与桌面版本不匹配，请重新下载并安装最新版本。",
+    "restartBackend": "重启后端服务",
+    "restarting": "正在重启后端服务...",
     "updatePip": "更新后端 (pip)",
     "pipCommand": "pip install --upgrade openakita",
     "copied": "已复制到剪贴板",

@@ -695,6 +695,9 @@
   "version": {
     "mismatch": "Version Mismatch",
     "mismatchDetail": "Backend version {{backend}} differs from desktop version {{desktop}}, which may cause issues.",
+    "mismatchPersist": "Backend version {{backend}} still differs from desktop version {{desktop}} after restart. The bundled backend does not match the desktop — please download and reinstall the latest version.",
+    "restartBackend": "Restart Backend",
+    "restarting": "Restarting backend...",
     "updatePip": "Update Backend (pip)",
     "pipCommand": "pip install --upgrade openakita",
     "copied": "Copied to clipboard",

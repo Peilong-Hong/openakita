@@ -1803,6 +1803,130 @@ fn set_current_workspace(id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 读取安装包内 bundled 后端版本号（不启动 Python，直接读文件）。
+fn bundled_backend_version() -> Option<String> {
+    let version_file = bundled_backend_dir()
+        .join("_internal")
+        .join("openakita")
+        .join("_bundled_version.txt");
+    fs::read_to_string(&version_file)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// 启动时后端版本对账的结果。
+///
+/// 三种状态覆盖所有情况，调用方据此决定是否启动新后端，
+/// 且只需一次 HTTP 健康检查，避免重复请求。
+enum VersionCheckResult {
+    /// 端口上没有后端在运行。
+    NotRunning,
+    /// 后端正在运行且版本可接受（匹配、dev 版本、或重启无法改善）。
+    RunningOk,
+    /// 旧版后端已被终止，需要启动新后端。
+    Upgraded,
+}
+
+/// DMG 覆盖安装后版本对账：检查运行中后端的版本，必要时替换。
+///
+/// macOS 上通过 DMG 拖拽覆盖安装后，旧的 openakita-server 进程可能仍在端口上
+/// 服务。新版 app 启动时必须检测版本不匹配并主动替换，否则会一直使用旧后端。
+///
+/// 此函数合并了「是否有后端在运行」和「版本是否匹配」两个检查，
+/// 只发一次 HTTP 请求，避免 setup 阶段重复探测。
+fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return VersionCheckResult::NotRunning,
+    };
+
+    let resp = match client
+        .get(format!("http://127.0.0.1:{}/api/health", port))
+        .send()
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return VersionCheckResult::NotRunning,
+    };
+
+    let json: serde_json::Value = match resp.json() {
+        Ok(v) => v,
+        Err(_) => return VersionCheckResult::RunningOk, // 响应成功但 JSON 解析失败，保守处理
+    };
+
+    let backend_version = json
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim_start_matches('v');
+    let desktop_version = app_version.trim_start_matches('v');
+
+    // 版本一致、dev 版本、或无法判断 → 保持现有后端
+    if backend_version.is_empty()
+        || backend_version == "0.0.0-dev"
+        || backend_version == desktop_version
+    {
+        return VersionCheckResult::RunningOk;
+    }
+
+    // 核心防护：检查安装包内 bundled 后端版本。
+    // 如果 bundled 版本和运行中版本相同，重启只会拉起同样版本的后端，
+    // 杀死毫无意义且可能影响用户正在使用的服务。
+    let bundled_v = bundled_backend_version()
+        .unwrap_or_default()
+        .trim_start_matches('v')
+        .to_string();
+    if !bundled_v.is_empty() && bundled_v == backend_version {
+        eprintln!(
+            "Version mismatch: backend={} desktop={}, but bundled backend is also {}. \
+             Restart would not help — keeping current backend.",
+            backend_version, desktop_version, bundled_v
+        );
+        return VersionCheckResult::RunningOk;
+    }
+
+    eprintln!(
+        "Version mismatch: running={} bundled={} desktop={}. Stopping old backend for upgrade...",
+        backend_version,
+        if bundled_v.is_empty() { "?" } else { &bundled_v },
+        desktop_version
+    );
+
+    // graceful_stop_pid 内部已包含：POST /api/shutdown → 等待 5s → force kill → 等待 2s
+    // 无需手动再发 shutdown 或 sleep。
+    let pid = match json.get("pid").and_then(|v| v.as_u64()).map(|p| p as u32) {
+        Some(p) => p,
+        None => {
+            eprintln!("Cannot determine backend PID from health response; keeping current backend.");
+            return VersionCheckResult::RunningOk;
+        }
+    };
+
+    if let Err(e) = graceful_stop_pid(pid, Some(port)) {
+        eprintln!(
+            "Failed to stop old backend (pid={}): {}. Keeping current backend.",
+            pid, e
+        );
+        return VersionCheckResult::RunningOk;
+    }
+
+    // 清理被终止进程对应的 PID 文件
+    for ent in list_service_pids() {
+        if let Some(data) = read_pid_file(&ent.workspace_id) {
+            if data.pid == pid || !is_pid_running(data.pid) {
+                let _ = fs::remove_file(service_pid_file(&ent.workspace_id));
+                remove_heartbeat_file(&ent.workspace_id);
+            }
+        }
+    }
+
+    eprintln!("Old backend (pid={}) stopped. New backend will be started automatically.", pid);
+    VersionCheckResult::Upgraded
+}
+
 /// 启动对账：清理残留锁文件和已死的 PID 文件
 fn startup_reconcile() {
     let dir = run_dir();
@@ -1942,17 +2066,20 @@ fn main() {
             // 如果有已配置的工作区且后端未在运行，则自动启动后端。
             // 前端通过 is_backend_auto_starting 查询此状态，
             // 在启动期间显示提示并禁用启动/重启按钮。
+            //
+            // startup_version_check 合并了「健康检查」和「版本对账」两步：
+            //   - NotRunning  → 端口无响应，需要启动
+            //   - RunningOk   → 后端在运行且版本可接受
+            //   - Upgraded    → 旧版后端已被终止，需要启动新版
+            let app_version = app.package_info().version.to_string();
             let state = read_state_file();
             if let Some(ref ws_id) = state.current_workspace_id {
                 let port = read_workspace_api_port(ws_id).unwrap_or(18900);
-                let already_running = reqwest::blocking::Client::builder()
-                    .timeout(std::time::Duration::from_secs(2))
-                    .build()
-                    .ok()
-                    .and_then(|c| c.get(format!("http://127.0.0.1:{}/api/health", port)).send().ok())
-                    .map(|r| r.status().is_success())
-                    .unwrap_or(false);
-                if !already_running {
+                let need_start = !matches!(
+                    startup_version_check(&app_version, port),
+                    VersionCheckResult::RunningOk
+                );
+                if need_start {
                     AUTO_START_IN_PROGRESS.store(true, Ordering::SeqCst);
                     let venv_dir = openakita_root_dir().join("venv").to_string_lossy().to_string();
                     let ws_clone = ws_id.clone();
