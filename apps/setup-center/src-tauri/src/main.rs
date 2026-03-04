@@ -3023,11 +3023,12 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
     let open_status = MenuItem::with_id(app, "open_status", "打开状态面板", true, None::<&str>)?;
+    let open_web = MenuItem::with_id(app, "open_web", "打开网页版", true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide", "隐藏窗口", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出（Quit）", true, None::<&str>)?;
 
-    let menu = Menu::with_items(app, &[&open_status, &show, &hide, &quit])?;
+    let menu = Menu::with_items(app, &[&open_status, &open_web, &show, &hide, &quit])?;
 
     TrayIconBuilder::with_id("main_tray")
         .icon(app.default_window_icon().unwrap().clone())
@@ -3110,6 +3111,18 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
+            }
+            "open_web" => {
+                let state = read_state_file();
+                let ws_id = state.current_workspace_id.unwrap_or_else(|| "default".into());
+                let port = read_workspace_api_port(&ws_id).unwrap_or(18900);
+                let url = format!("http://127.0.0.1:{}/web", port);
+                #[cfg(target_os = "windows")]
+                { let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn(); }
+                #[cfg(target_os = "macos")]
+                { let _ = std::process::Command::new("open").arg(&url).spawn(); }
+                #[cfg(target_os = "linux")]
+                { let _ = std::process::Command::new("xdg-open").arg(&url).spawn(); }
             }
             "open_status" => {
                 if let Some(w) = app.get_webview_window("main") {
