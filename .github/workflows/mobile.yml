@@ -128,6 +128,18 @@ jobs:
       - name: Install iOS platform
         run: npm install @capacitor/ios --save && npx cap add ios
 
+      - name: Replace iOS app icon
+        run: |
+          ICON_SRC=ios-icon
+          ICON_DST=ios/App/App/Assets.xcassets/AppIcon.appiconset
+          if [ -d "$ICON_SRC" ] && [ -d "$ICON_DST" ]; then
+            cp "$ICON_SRC"/AppIcon-1024.png "$ICON_DST"/
+            cp "$ICON_SRC"/Contents.json "$ICON_DST"/
+            echo "iOS app icon replaced"
+          else
+            echo "Icon source or destination not found, skipping"
+          fi
+
       - name: Sync Capacitor iOS
         run: npx cap sync ios
 
