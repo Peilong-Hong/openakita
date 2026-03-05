@@ -131,15 +131,6 @@ jobs:
       - name: Sync Capacitor iOS
         run: npx cap sync ios
 
-      - name: Verify iOS workspace
-        run: |
-          echo "=== ios/App contents ==="
-          ls -la ios/App/
-          if [ ! -d "ios/App/App.xcworkspace" ]; then
-            echo "xcworkspace not found, running pod install..."
-            cd ios/App && pod install
-          fi
-
       - name: Check iOS signing secrets
         id: ios_signing
         env:
@@ -189,7 +180,7 @@ jobs:
         working-directory: apps/setup-center/ios/App
         run: |
           xcodebuild archive \
-            -workspace App.xcworkspace \
+            -project App.xcodeproj \
             -scheme App \
             -configuration Release \
             -archivePath $RUNNER_TEMP/App.xcarchive \
@@ -226,7 +217,7 @@ jobs:
         working-directory: apps/setup-center/ios/App
         run: |
           xcodebuild build \
-            -workspace App.xcworkspace \
+            -project App.xcodeproj \
             -scheme App \
             -configuration Debug \
             -destination "generic/platform=iOS Simulator" \
