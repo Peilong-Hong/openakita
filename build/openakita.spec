@@ -489,6 +489,16 @@ try:
 except ImportError:
     print("[spec] WARNING: browser_use not installed, prompt templates not bundled")
 
+# Web frontend for remote browser access (built by: cd apps/setup-center && npm run build:web)
+# Bundled to openakita/web/ so _find_web_dist() in server.py can locate it
+# via Path(__file__).parent.parent / "web" → _internal/openakita/web/
+web_dist_dir = PROJECT_ROOT / "apps" / "setup-center" / "dist-web"
+if (web_dist_dir / "index.html").exists():
+    datas.append((str(web_dist_dir), "openakita/web"))
+    print(f"[spec] Bundling web frontend: {web_dist_dir}")
+else:
+    print("[spec] INFO: dist-web not found, web remote access will not be available")
+
 # Provider list (single source of truth, shared by frontend and backend)
 # Must be bundled to openakita/llm/registries/ directory, Python reads via Path(__file__).parent
 providers_json = SRC_DIR / "openakita" / "llm" / "registries" / "providers.json"

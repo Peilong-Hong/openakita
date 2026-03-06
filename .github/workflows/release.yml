@@ -235,11 +235,15 @@ jobs:
           workspaces: |
             apps/setup-center/src-tauri -> target
 
+      - name: Build web frontend for remote browser access
+        working-directory: apps/setup-center
+        run: |
+          npm ci
+          npm run build:web
+
       - name: Install Python project and PyInstaller
         shell: bash
         run: |
-          # Ensure dist-web exists (required by pyproject.toml force-include; actual web build not needed for desktop)
-          mkdir -p apps/setup-center/dist-web
           pip install -e ".[all]"
           pip install "pyinstaller>=6.18.0"
 

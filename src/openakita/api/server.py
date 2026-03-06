@@ -85,7 +85,7 @@ def _find_web_dist() -> Path | None:
     """Locate the web frontend dist directory.
 
     Search order:
-    1. openakita/web/ (installed via pip wheel)
+    1. openakita/web/ (pip wheel install & PyInstaller bundle)
     2. apps/setup-center/dist-web/ (development)
     """
     # Inside the installed package

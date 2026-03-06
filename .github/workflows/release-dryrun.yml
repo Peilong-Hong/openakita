@@ -27,6 +27,19 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Set up Node (for web frontend build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/setup-center/package-lock.json
+
+      - name: Build web frontend
+        working-directory: apps/setup-center
+        run: |
+          npm ci
+          npm run build:web
+
       - name: Build wheel
         run: |
           pip install build
@@ -128,6 +141,12 @@ jobs:
         with:
           workspaces: |
             apps/setup-center/src-tauri -> target
+
+      - name: Build web frontend for remote browser access
+        working-directory: apps/setup-center
+        run: |
+          npm ci
+          npm run build:web
 
       - name: Install Python project and PyInstaller
         shell: bash
