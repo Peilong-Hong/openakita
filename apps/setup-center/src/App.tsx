@@ -1,6 +1,6 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, getAppVersion, onWsEvent, logger } from "./platform";
+import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, getAppVersion, onWsEvent, reconnectWsNow, logger } from "./platform";
 import { getActiveServer, getActiveServerId } from "./platform/servers";
 import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, logout, clearAccessToken } from "./platform/auth";
 import { LoginView } from "./views/LoginView";
@@ -756,6 +756,11 @@ export function App() {
         visibilityGraceRef.current = true;
         heartbeatFailCount.current = 0;
         setTimeout(() => { visibilityGraceRef.current = false; }, 10000);
+        // 立即重连 WebSocket（后台期间连接可能已断开）
+        reconnectWsNow();
+        // 通知 ChatView 等组件检查进行中的 SSE 流
+        window.dispatchEvent(new Event("openakita_app_resumed"));
+        logger.info("App", "Resumed from background");
       }
     };
     document.addEventListener("visibilitychange", handler);

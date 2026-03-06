@@ -1919,6 +1919,21 @@ export function ChatView({
     };
   }, [flushCurrentConversationToStorage]);
 
+  // ── APP 后台恢复：中断已断开的 SSE 流 ──
+  useEffect(() => {
+    const handler = () => {
+      for (const [convId, ctx] of streamContexts.current) {
+        if (!ctx.isStreaming) continue;
+        // Check if the reader is likely dead (WebView disconnects streams in background)
+        // Abort the stream and let the error handler show the disconnection message
+        ctx.abort.abort();
+        logger.warn("Chat", "SSE stream aborted after app resume", { convId });
+      }
+    };
+    window.addEventListener("openakita_app_resumed", handler);
+    return () => window.removeEventListener("openakita_app_resumed", handler);
+  }, []);
+
   // ── 切换对话时加载对应消息 ──
   const skipConvLoadRef = useRef(false);
   const hydrateSeqRef = useRef(0);
@@ -2897,9 +2912,34 @@ export function ChatView({
                     return updated;
                   }, undefined);
                 }
+                if (event.tool === "spawn_agent") {
+                  const targetId = String(event.args?.inherit_from || event.args?.agent_id || `spawn_${Date.now()}`);
+                  updateSubAgents((prev) => {
+                    const exists = prev.find((s) => s.agentId === targetId);
+                    if (exists) return prev.map((s) => s.agentId === targetId ? { ...s, status: "delegating" as const, startTime: Date.now() } : s);
+                    return [...prev, { agentId: targetId, status: "delegating" as const, reason: String(event.args?.task || event.args?.reason || ""), startTime: Date.now() }];
+                  }, undefined);
+                }
+                if (event.tool === "create_agent" && event.args?.name) {
+                  const targetId = String(event.args.name);
+                  updateSubAgents((prev) => {
+                    const exists = prev.find((s) => s.agentId === targetId);
+                    if (exists) return prev.map((s) => s.agentId === targetId ? { ...s, status: "delegating" as const, startTime: Date.now() } : s);
+                    return [...prev, { agentId: targetId, status: "delegating" as const, reason: String(event.args.description || ""), startTime: Date.now() }];
+                  }, undefined);
+                }
 
                 // Per-session polling for sub-agent progress
-                if ((event.tool === "delegate_to_agent" || event.tool === "delegate_parallel") && !sctx.isDelegating) {
+                const _isAgentTool = event.tool === "delegate_to_agent" || event.tool === "delegate_parallel" || event.tool === "spawn_agent" || event.tool === "create_agent";
+                if (_isAgentTool) {
+                  logger.info("Chat", "Agent tool detected in SSE", {
+                    tool: event.tool, args: JSON.stringify(event.args || {}).slice(0, 200),
+                    multiAgentEnabled: String(multiAgentEnabled),
+                    activeConv: activeConvIdRef.current, thisConv: thisConvId,
+                    subAgentsCount: sctx.activeSubAgents.length,
+                  });
+                }
+                if (_isAgentTool && !sctx.isDelegating) {
                   sctx.isDelegating = true;
                   if (sctx.pollingTimer) clearInterval(sctx.pollingTimer);
                   const doFetch = () => {
@@ -2910,7 +2950,10 @@ export function ChatView({
                         const c = streamContexts.current.get(thisConvId);
                         if (c) c.subAgentTasks = data;
                         if (activeConvIdRef.current === thisConvId) setDisplaySubAgentTasks(data);
-                        // Stop polling if all sub-agents reached terminal state
+                        logger.debug("Chat", "Sub-tasks poll result", {
+                          count: data.length,
+                          activeConvMatch: String(activeConvIdRef.current === thisConvId),
+                        });
                         const allDone = data.length > 0 && data.every(
                           (t) => t.status === "completed" || t.status === "error" || t.status === "timeout" || t.status === "cancelled"
                         );
@@ -2920,7 +2963,9 @@ export function ChatView({
                           c.isDelegating = false;
                         }
                       })
-                      .catch(() => {});
+                      .catch((e) => {
+                        logger.warn("Chat", "Sub-tasks poll failed", { error: String(e) });
+                      });
                   };
                   setTimeout(doFetch, 500);
                   sctx.pollingTimer = setInterval(doFetch, 2000);
@@ -2942,7 +2987,8 @@ export function ChatView({
                 break;
               }
               case "tool_call_end": {
-                if (event.tool === "delegate_to_agent" || event.tool === "delegate_parallel") {
+                const _isAgentToolEnd = event.tool === "delegate_to_agent" || event.tool === "delegate_parallel" || event.tool === "spawn_agent" || event.tool === "create_agent";
+                if (_isAgentToolEnd) {
                   const isErr = event.is_error === true || (event.result || "").startsWith("❌");
                   updateSubAgents((prev) => prev.map((s) =>
                     s.status === "delegating" ? { ...s, status: isErr ? "error" : "done" } : s
@@ -2956,7 +3002,6 @@ export function ChatView({
                       const c = streamContexts.current.get(thisConvId);
                       if (c) c.subAgentTasks = data;
                       if (activeConvIdRef.current === thisConvId) setDisplaySubAgentTasks(data);
-                      // Auto-clear cards after a delay when all sub-agents are done
                       const allDone = data.length > 0 && data.every(
                         (t) => t.status === "completed" || t.status === "error" || t.status === "timeout" || t.status === "cancelled"
                       );
@@ -3237,7 +3282,7 @@ export function ChatView({
             guidance = t("chat.backendOnlineUpstreamHint");
           }
         } catch { /* health probe failed -> keep backend guidance */ }
-        setMessages((prev) => prev.map((m) =>
+        updateMessages((prev) => prev.map((m) =>
           m.id === assistantMsg.id ? { ...m, content: `连接失败：${errMsg}\n\n${guidance}`, streaming: false } : m
         ));
       }

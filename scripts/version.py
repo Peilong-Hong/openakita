@@ -10,6 +10,7 @@
   - apps/setup-center/src-tauri/tauri.conf.json (version)
   - apps/setup-center/src-tauri/Cargo.toml ([package].version)
   - apps/setup-center/src-tauri/Cargo.lock (openakita-setup-center package entry)
+  - apps/setup-center/android/app/build.gradle (versionName + versionCode)
 - CI/Release 可用 `check` 阻止漏改。
 """
 
@@ -179,6 +180,59 @@ def _update_bundled_version(version: str) -> bool:
     return True
 
 
+def _version_to_code(version: str) -> int:
+    """Convert semver to an integer versionCode: 1.25.8 → 12508, 2.0.0 → 20000."""
+    parts = version.split("-")[0].split(".")
+    major, minor, patch = (int(parts[i]) if i < len(parts) else 0 for i in range(3))
+    return major * 10000 + minor * 100 + patch
+
+
+def _update_android_gradle(version: str) -> bool:
+    path = ROOT / "apps/setup-center/android/app/build.gradle"
+    if not path.exists():
+        return False
+    text = _read_text(path)
+
+    new_code = _version_to_code(version)
+
+    # Update versionName
+    old_name_m = re.search(r'(?m)(versionName\s+)"([^"]*)"', text)
+    old_name = old_name_m.group(2) if old_name_m else None
+
+    # Update versionCode — use semver-derived code, but never decrease
+    old_code_m = re.search(r"(?m)(versionCode\s+)(\d+)", text)
+    old_code = int(old_code_m.group(2)) if old_code_m else 0
+    if new_code <= old_code:
+        new_code = old_code + 1
+
+    new_text = text
+    if old_name_m:
+        new_text = re.sub(
+            r'(?m)(versionName\s+)"[^"]*"',
+            f'\\1"{version}"',
+            new_text,
+            count=1,
+        )
+    if old_code_m:
+        new_text = re.sub(
+            r"(?m)(versionCode\s+)\d+",
+            f"\\g<1>{new_code}",
+            new_text,
+            count=1,
+        )
+
+    if new_text == text:
+        return False
+    changed = _write_text_if_changed(path, new_text)
+    if changed:
+        print(
+            f"apps/setup-center/android/app/build.gradle: "
+            f"versionName {old_name!r} -> {version!r}, "
+            f"versionCode {old_code} -> {new_code}"
+        )
+    return changed
+
+
 def sync(version: str) -> int:
     version = _validate_version(version)
     changed_any = False
@@ -189,6 +243,7 @@ def sync(version: str) -> int:
     changed_any |= _update_cargo_toml(version)
     changed_any |= _update_cargo_lock(version)
     changed_any |= _update_bundled_version(version)
+    changed_any |= _update_android_gradle(version)
 
     if not changed_any:
         print("OK: versions already in sync.")
@@ -237,6 +292,14 @@ def check(expected: str | None) -> int:
     )
     if not lm or lm.group(1) != v:
         mismatches.append("apps/setup-center/src-tauri/Cargo.lock")
+
+    # Android build.gradle
+    gradle_path = ROOT / "apps/setup-center/android/app/build.gradle"
+    if gradle_path.exists():
+        gradle_text = _read_text(gradle_path)
+        gm = re.search(r'(?m)versionName\s+"([^"]*)"', gradle_text)
+        if not gm or gm.group(1) != v:
+            mismatches.append("apps/setup-center/android/app/build.gradle")
 
     if mismatches:
         print(f"ERROR: 版本未统一到 VERSION={v}，不一致文件：", file=sys.stderr)

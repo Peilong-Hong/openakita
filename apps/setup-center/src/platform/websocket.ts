@@ -142,6 +142,27 @@ export function disconnectWs(): void {
   _connected = false;
 }
 
+/**
+ * Immediately reconnect WebSocket (e.g. after app returns from background).
+ * Resets backoff and attempts counter. No-op if no handlers are registered.
+ */
+export function reconnectWsNow(): void {
+  if (IS_TAURI) return;
+  _intentionallyClosed = false;
+  if (_reconnectTimer) {
+    clearTimeout(_reconnectTimer);
+    _reconnectTimer = null;
+  }
+  _reconnectDelay = 1000;
+  _reconnectAttempts = 0;
+  if (_ws) {
+    try { _ws.close(); } catch { /* ignore */ }
+    _ws = null;
+  }
+  _connected = false;
+  if (_handlers.length > 0) _connect();
+}
+
 export function isWsConnected(): boolean {
   return _connected;
 }
