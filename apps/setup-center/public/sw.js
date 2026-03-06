@@ -25,6 +25,9 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
+  // Skip non-http(s) schemes (chrome-extension://, etc.)
+  if (!url.protocol.startsWith("http")) return;
+
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/ws/")) {
     return;
   }

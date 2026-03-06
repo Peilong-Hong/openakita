@@ -9,8 +9,9 @@ if (typeof AbortSignal.timeout !== "function") {
   };
 }
 
-import { installLocalFetchOverride } from "./localFetch";
-installLocalFetchOverride();
+if (__BUILD_TARGET__ === "tauri") {
+  import("./localFetch").then(m => m.installLocalFetchOverride());
+}
 
 import React from "react";
 import ReactDOM from "react-dom/client";
