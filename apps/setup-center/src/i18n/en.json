@@ -200,7 +200,19 @@
     "importLocalTitle": "Select local skill folder",
     "importLocalImporting": "Importing...",
     "importLocalSuccess": "Local skill imported successfully",
-    "importLocalNoSkillMd": "No SKILL.md found in the selected folder. Please choose a valid skill directory."
+    "importLocalNoSkillMd": "No SKILL.md found in the selected folder. Please choose a valid skill directory.",
+    "viewDetail": "View",
+    "editContent": "Edit",
+    "cancelEdit": "Cancel",
+    "saveAndReload": "Save & Reload",
+    "contentSaved": "Skill saved and reloaded successfully",
+    "contentSaveFailed": "Failed to save",
+    "loadingContent": "Loading skill content...",
+    "readOnlyHint": "Built-in system skill, read-only",
+    "filePath": "File Path",
+    "skillType": "Type",
+    "skillCategory": "Category",
+    "requiresBackend": "Requires backend service running"
   },
   "mcp": {
     "title": "MCP Server Management",
