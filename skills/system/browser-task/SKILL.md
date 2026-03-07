@@ -1,6 +1,6 @@
 ---
 name: browser-task
-description: 智能浏览器任务 - 描述任务，自动完成（推荐优先使用）
+description: Smart browser task agent - describe what you want done in natural language and it completes automatically. PREFERRED tool for multi-step browser operations like searching, form filling, and data extraction.
 system: true
 handler: browser
 tool-name: browser_task
