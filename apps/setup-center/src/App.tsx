@@ -29,6 +29,7 @@ import {
 import logoUrl from "./assets/logo.png";
 import "highlight.js/styles/github.css";
 import { getThemePref, setThemePref, THEME_CHANGE_EVENT, type Theme } from "./theme";
+import { copyToClipboard } from "./utils/clipboard";
 // ═══════════════════════════════════════════════════════════════════════
 // 前后端交互路由原则（全局适用）：
 //   后端运行中 → 所有配置读写、模型列表、连接测试 **优先走后端 HTTP API**
@@ -1083,10 +1084,12 @@ function TroubleshootPanel({ t, os }: { t: (k: string) => string; os: string }) 
     { label: t("status.troubleshootKillProcess"), cmd: cmds.kill, id: "kill" },
   ];
 
-  const copyText = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(id);
-    setTimeout(() => setCopied(null), 1500);
+  const copyText = async (text: string, id: string) => {
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopied(id);
+      setTimeout(() => setCopied(null), 1500);
+    }
   };
 
   return (
@@ -4821,9 +4824,16 @@ export function App() {
                     <span className="epTableName">{e.name}</span>
                     <span className="epTableModel">{e.model}</span>
                     <span>{e.keyPresent ? <DotGreen /> : <DotGray />}</span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 4 }} title={fullError || undefined}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 4 }} title={fullError ? (t("status.clickToCopy", "点击复制") + ": " + fullError) : undefined}>
                       <span className={"healthDot " + dotClass} />
-                      <span className="epTableStatus" style={fullError ? { cursor: "help" } : undefined}>{label}</span>
+                      <span
+                        className="epTableStatus"
+                        style={fullError ? { cursor: "pointer" } : undefined}
+                        onClick={fullError ? async (e) => { e.stopPropagation(); const ok = await copyToClipboard(fullError); if (ok) setNotice(t("version.copied")); } : undefined}
+                        role={fullError ? "button" : undefined}
+                      >
+                        {label}
+                      </span>
                     </span>
                     <button className="btnSmall" onClick={async () => {
                       setHealthChecking(e.name);
@@ -8404,7 +8414,7 @@ export function App() {
           <div className="toastContainer">
             {busy && <div className="toast toastInfo">{busy}</div>}
             {notice && <div className="toast toastOk" onClick={() => setNotice(null)}>{notice}</div>}
-            {error && <div className="toast toastError" onClick={() => setError(null)}>{error}</div>}
+            {error && <div className="toast toastError" title={t("status.clickToCopy", "点击复制")} onClick={async () => { const ok = await copyToClipboard(error); if (ok) setNotice(t("version.copied")); setError(null); }}>{error}</div>}
           </div>
         )}
       </div>
@@ -8937,7 +8947,7 @@ export function App() {
           <div className="toastContainer">
             {busy && <div className="toast toastInfo">{busy}</div>}
             {notice && <div className="toast toastOk" onClick={() => setNotice(null)}>{notice}</div>}
-            {error && <div className="toast toastError" onClick={() => setError(null)}>{error}</div>}
+            {error && <div className="toast toastError" title={t("status.clickToCopy", "点击复制")} onClick={async () => { const ok = await copyToClipboard(error); if (ok) setNotice(t("version.copied")); setError(null); }}>{error}</div>}
           </div>
         )}
 
