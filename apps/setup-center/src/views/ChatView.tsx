@@ -2687,6 +2687,7 @@ export function ChatView({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ content: msgContent, target_node_id: targetNodeId }),
+            signal: AbortSignal.timeout(300_000),
           });
           const data = await res.json();
           const resultText = data.result || data.error || JSON.stringify(data);
